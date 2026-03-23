@@ -40,7 +40,9 @@ COPY . .
 
 EXPOSE 8000
 
-# Use Xvfb to provide a virtual display so Chrome runs in non-headless mode
-# (required to bypass Cloudflare Turnstile fingerprinting).
-# Shell form is required to expand $PORT (Railway assigns it dynamically).
-CMD Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp -ac &>/dev/null & sleep 1 && export DISPLAY=:99 && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Xvfb virtual display for non-headless Chrome (required for Cloudflare bypass)
+ENV DISPLAY=:99
+
+# Start Xvfb in the background, wait for it, then launch the app.
+# Shell form is required to expand $PORT (assigned dynamically by hosting platforms).
+CMD Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp -ac &>/dev/null & sleep 2 && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
