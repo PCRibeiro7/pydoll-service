@@ -4,12 +4,12 @@ HTTP service wrapping [pydoll](https://github.com/autoscrape-labs/pydoll) — an
 
 ## Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET`  | `/health` | Health check |
-| `POST` | `/scrape` | Navigate to a URL and return page HTML (or a CSS/XPath-selected element's text) |
-| `POST` | `/screenshot` | Take a PNG screenshot and return it as base64 |
-| `POST` | `/pdf` | Generate a PDF of the page and return it as base64 |
+| Method | Path          | Description                                                                     |
+| ------ | ------------- | ------------------------------------------------------------------------------- |
+| `GET`  | `/health`     | Health check                                                                    |
+| `POST` | `/scrape`     | Navigate to a URL and return page HTML (or a CSS/XPath-selected element's text) |
+| `POST` | `/screenshot` | Take a PNG screenshot and return it as base64                                   |
+| `POST` | `/pdf`        | Generate a PDF of the page and return it as base64                              |
 
 ### Authentication
 
@@ -41,11 +41,22 @@ curl -X POST http://localhost:8000/pdf \
 
 Pydoll requires a running Chromium browser process. Netlify only offers serverless functions (AWS Lambda) and static hosting — neither provides a persistent runtime or lets you install Chrome. This project uses Docker instead.
 
+## Cloudflare bypass
+
+Chrome runs in **non-headless mode** to pass Cloudflare Turnstile fingerprinting checks (headless Chrome is detectable). In Docker, `xvfb-run` provides a virtual display so no physical screen is needed. Locally on Windows, the browser window is moved offscreen.
+
 ## Run locally
 
 ```bash
 docker build -t pydoll-service .
 docker run -p 8000:8000 -e API_KEY=secret pydoll-service
+```
+
+Or without Docker (requires Chrome installed):
+
+```bash
+pip install -r requirements.txt
+uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
 Then open http://localhost:8000/docs for the interactive Swagger UI.

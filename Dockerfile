@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-# Install Chrome dependencies + Chrome
+# Install Chrome dependencies + Chrome + Xvfb (virtual framebuffer)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     gnupg \
@@ -20,6 +20,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxdamage1 \
     libxrandr2 \
     xdg-utils \
+    xvfb \
+    xauth \
     && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub \
        | gpg --dearmor > /usr/share/keyrings/googlechrome-linux-keyring.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-linux-keyring.gpg] \
@@ -38,4 +40,7 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Use Xvfb to provide a virtual display so Chrome runs in non-headless mode
+# (required to bypass Cloudflare Turnstile fingerprinting).
+# Shell form is required to expand $PORT (Railway assigns it dynamically).
+CMD Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp -ac &>/dev/null & sleep 1 && export DISPLAY=:99 && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}

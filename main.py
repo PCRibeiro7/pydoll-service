@@ -1,5 +1,7 @@
+import asyncio
 import ipaddress
 import os
+import sys
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Security
@@ -55,14 +57,18 @@ def create_browser_options(
     load_state: PageLoadState = PageLoadState.INTERACTIVE,
 ) -> ChromiumOptions:
     options = ChromiumOptions()
-    options.headless = True
     options.page_load_state = load_state
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--window-size=1920,1080")
+    # Non-headless Chrome is required to bypass Cloudflare Turnstile.
+    # On Windows (local dev) we move the window offscreen;
+    # on Linux (Docker) Xvfb provides a virtual display.
+    if sys.platform == "win32":
+        options.add_argument("--window-position=-2400,-2400")
+    options.webrtc_leak_protection = True
     options.block_notifications = True
     options.block_popups = True
     return options
@@ -71,12 +77,44 @@ def create_browser_options(
 app = FastAPI(title="Pydoll HTTP Service", version="1.0.0")
 
 
+def _extract_value(cdp_response: dict):
+    """Extract the actual value from a CDP Runtime.evaluate response."""
+    return cdp_response["result"]["result"]["value"]
+
+
+async def _navigate(tab, url: str, bypass_cloudflare: bool, wait: int, timeout: int):
+    """Navigate to a URL, optionally bypassing Cloudflare, and wait for content."""
+    if bypass_cloudflare:
+        async with tab.expect_and_bypass_cloudflare_captcha(
+            time_to_wait_captcha=timeout,
+        ):
+            await tab.go_to(url)
+        # After the bypass clicks the checkbox, Cloudflare still needs time to
+        # verify and redirect. Poll until the page title is no longer the
+        # challenge page ("Just a moment...").
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            title = _extract_value(
+                await tab.execute_script("return document.title")
+            )
+            if title and "just a moment" not in title.lower():
+                break
+            await asyncio.sleep(0.5)
+    else:
+        await tab.go_to(url)
+
+    if wait > 0:
+        await asyncio.sleep(wait)
+
+
 # ── Request / Response Models ────────────────────────────────────────────────
 
 
 class ScrapeRequest(BaseModel):
     url: HttpUrl
     selector: str | None = None
+    bypass_cloudflare: bool = True
+    wait: int = 0
     timeout: int = 30
 
 
@@ -90,6 +128,8 @@ class ScreenshotRequest(BaseModel):
     url: HttpUrl
     full_page: bool = False
     quality: int = 90
+    bypass_cloudflare: bool = True
+    wait: int = 0
     timeout: int = 30
 
 
@@ -103,6 +143,8 @@ class PdfRequest(BaseModel):
     landscape: bool = False
     print_background: bool = True
     scale: float = 1.0
+    bypass_cloudflare: bool = True
+    wait: int = 0
     timeout: int = 30
 
 
@@ -125,16 +167,23 @@ async def scrape(request: ScrapeRequest, _=Security(verify_api_key)):
 
     async with Chrome(options=create_browser_options()) as browser:
         tab = await browser.start()
-        await tab.go_to(validated_url)
+        await _navigate(
+            tab, validated_url,
+            request.bypass_cloudflare, request.wait, request.timeout,
+        )
 
-        title = await tab.execute_script("return document.title")
+        title = _extract_value(
+            await tab.execute_script("return document.title")
+        )
 
         if request.selector:
             element = await tab.query(request.selector)
             content = await element.text
         else:
-            content = await tab.execute_script(
-                "return document.documentElement.outerHTML"
+            content = _extract_value(
+                await tab.execute_script(
+                    "return document.documentElement.outerHTML"
+                )
             )
 
         return ScrapeResponse(url=validated_url, title=title, content=content)
@@ -144,11 +193,12 @@ async def scrape(request: ScrapeRequest, _=Security(verify_api_key)):
 async def screenshot(request: ScreenshotRequest, _=Security(verify_api_key)):
     validated_url = validate_url(str(request.url))
 
-    async with Chrome(
-        options=create_browser_options(PageLoadState.COMPLETE)
-    ) as browser:
+    async with Chrome(options=create_browser_options()) as browser:
         tab = await browser.start()
-        await tab.go_to(validated_url)
+        await _navigate(
+            tab, validated_url,
+            request.bypass_cloudflare, request.wait, request.timeout,
+        )
 
         image_base64 = await tab.take_screenshot(
             as_base64=True,
@@ -163,11 +213,12 @@ async def screenshot(request: ScreenshotRequest, _=Security(verify_api_key)):
 async def pdf(request: PdfRequest, _=Security(verify_api_key)):
     validated_url = validate_url(str(request.url))
 
-    async with Chrome(
-        options=create_browser_options(PageLoadState.COMPLETE)
-    ) as browser:
+    async with Chrome(options=create_browser_options()) as browser:
         tab = await browser.start()
-        await tab.go_to(validated_url)
+        await _navigate(
+            tab, validated_url,
+            request.bypass_cloudflare, request.wait, request.timeout,
+        )
 
         pdf_base64 = await tab.print_to_pdf(
             as_base64=True,
