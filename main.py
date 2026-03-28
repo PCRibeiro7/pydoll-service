@@ -1,5 +1,6 @@
 import asyncio
 import ipaddress
+import logging
 import os
 import sys
 from urllib.parse import urlparse
@@ -11,6 +12,10 @@ from pydoll.browser.chromium import Chrome
 from pydoll.browser.options import ChromiumOptions
 from pydoll.constants import PageLoadState
 from pydoll.exceptions import CommandExecutionTimeout
+
+logger = logging.getLogger(__name__)
+
+MAX_RETRIES = 3
 
 API_KEY = os.environ.get("API_KEY", "")
 
@@ -91,10 +96,10 @@ async def _navigate(tab, url: str, bypass_cloudflare: bool, wait: int, timeout: 
                 time_to_wait_captcha=timeout,
             ):
                 await tab.go_to(url)
-        except CommandExecutionTimeout:
-            # The cleanup phase (disable_page_events) can time out on
-            # resource-constrained hosts. The page is already loaded at
-            # this point, so it is safe to continue.
+        except (CommandExecutionTimeout, TimeoutError):
+            # The setup/cleanup phase can time out on resource-constrained
+            # hosts. If the page already loaded, it is safe to continue;
+            # otherwise the caller's retry loop will handle it.
             pass
         # After the bypass clicks the checkbox, Cloudflare still needs time to
         # verify and redirect. Poll until the page title is no longer the
@@ -105,7 +110,7 @@ async def _navigate(tab, url: str, bypass_cloudflare: bool, wait: int, timeout: 
                 title = _extract_value(
                     await tab.execute_script("return document.title")
                 )
-            except CommandExecutionTimeout:
+            except (CommandExecutionTimeout, TimeoutError):
                 await asyncio.sleep(0.5)
                 continue
             if title and "just a moment" not in title.lower():
@@ -176,66 +181,93 @@ async def health():
 async def scrape(request: ScrapeRequest, _=Security(verify_api_key)):
     validated_url = validate_url(str(request.url))
 
-    async with Chrome(options=create_browser_options()) as browser:
-        tab = await browser.start()
-        await _navigate(
-            tab, validated_url,
-            request.bypass_cloudflare, request.wait, request.timeout,
-        )
-
-        title = _extract_value(
-            await tab.execute_script("return document.title")
-        )
-
-        if request.selector:
-            element = await tab.query(request.selector)
-            content = await element.text
-        else:
-            content = _extract_value(
-                await tab.execute_script(
-                    "return document.documentElement.outerHTML"
+    last_exc: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            async with Chrome(options=create_browser_options()) as browser:
+                tab = await browser.start()
+                await _navigate(
+                    tab, validated_url,
+                    request.bypass_cloudflare, request.wait, request.timeout,
                 )
-            )
 
-        return ScrapeResponse(url=validated_url, title=title, content=content)
+                title = _extract_value(
+                    await tab.execute_script("return document.title")
+                )
+
+                if request.selector:
+                    element = await tab.query(request.selector)
+                    content = await element.text
+                else:
+                    content = _extract_value(
+                        await tab.execute_script(
+                            "return document.documentElement.outerHTML"
+                        )
+                    )
+
+                return ScrapeResponse(url=validated_url, title=title, content=content)
+        except (TimeoutError, CommandExecutionTimeout) as exc:
+            last_exc = exc
+            logger.warning("Attempt %d/%d failed: %s", attempt, MAX_RETRIES, exc)
+            await asyncio.sleep(attempt)  # linear back-off
+
+    raise HTTPException(status_code=504, detail=f"Browser timed out after {MAX_RETRIES} attempts: {last_exc}")
 
 
 @app.post("/screenshot", response_model=ScreenshotResponse)
 async def screenshot(request: ScreenshotRequest, _=Security(verify_api_key)):
     validated_url = validate_url(str(request.url))
 
-    async with Chrome(options=create_browser_options()) as browser:
-        tab = await browser.start()
-        await _navigate(
-            tab, validated_url,
-            request.bypass_cloudflare, request.wait, request.timeout,
-        )
+    last_exc: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            async with Chrome(options=create_browser_options()) as browser:
+                tab = await browser.start()
+                await _navigate(
+                    tab, validated_url,
+                    request.bypass_cloudflare, request.wait, request.timeout,
+                )
 
-        image_base64 = await tab.take_screenshot(
-            as_base64=True,
-            quality=request.quality,
-            beyond_viewport=request.full_page,
-        )
+                image_base64 = await tab.take_screenshot(
+                    as_base64=True,
+                    quality=request.quality,
+                    beyond_viewport=request.full_page,
+                )
 
-        return ScreenshotResponse(url=validated_url, image_base64=image_base64)
+                return ScreenshotResponse(url=validated_url, image_base64=image_base64)
+        except (TimeoutError, CommandExecutionTimeout) as exc:
+            last_exc = exc
+            logger.warning("Attempt %d/%d failed: %s", attempt, MAX_RETRIES, exc)
+            await asyncio.sleep(attempt)
+
+    raise HTTPException(status_code=504, detail=f"Browser timed out after {MAX_RETRIES} attempts: {last_exc}")
 
 
 @app.post("/pdf", response_model=PdfResponse)
 async def pdf(request: PdfRequest, _=Security(verify_api_key)):
     validated_url = validate_url(str(request.url))
 
-    async with Chrome(options=create_browser_options()) as browser:
-        tab = await browser.start()
-        await _navigate(
-            tab, validated_url,
-            request.bypass_cloudflare, request.wait, request.timeout,
-        )
+    last_exc: Exception | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            async with Chrome(options=create_browser_options()) as browser:
+                tab = await browser.start()
+                await _navigate(
+                    tab, validated_url,
+                    request.bypass_cloudflare, request.wait, request.timeout,
+                )
 
-        pdf_base64 = await tab.print_to_pdf(
-            as_base64=True,
-            landscape=request.landscape,
-            print_background=request.print_background,
-            scale=request.scale,
-        )
+                pdf_base64 = await tab.print_to_pdf(
+                    as_base64=True,
+                    landscape=request.landscape,
+                    print_background=request.print_background,
+                    scale=request.scale,
+                )
 
-        return PdfResponse(url=validated_url, pdf_base64=pdf_base64)
+                return PdfResponse(url=validated_url, pdf_base64=pdf_base64)
+        except (TimeoutError, CommandExecutionTimeout) as exc:
+            last_exc = exc
+            logger.warning("Attempt %d/%d failed: %s", attempt, MAX_RETRIES, exc)
+            await asyncio.sleep(attempt)
+
+    raise HTTPException(status_code=504, detail=f"Browser timed out after {MAX_RETRIES} attempts: {last_exc}")
