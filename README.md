@@ -1,3 +1,12 @@
+---
+title: Pydoll Service
+emoji: 🌐
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+---
+
 # pydoll-service
 
 HTTP service wrapping [pydoll](https://github.com/autoscrape-labs/pydoll) — an async Chromium automation library that connects via Chrome DevTools Protocol.
