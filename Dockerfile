@@ -38,11 +38,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 8000
+EXPOSE 7860
 
 # Xvfb virtual display for non-headless Chrome (required for Cloudflare bypass)
 ENV DISPLAY=:99
 
 # Start Xvfb in the background, wait for it, then launch the app.
 # Shell form is required to expand $PORT (assigned dynamically by hosting platforms).
-CMD Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp -ac &>/dev/null & sleep 2 && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp -ac &>/dev/null & sleep 2 && uvicorn main:app --host 0.0.0.0 --port ${PORT:-7860}
