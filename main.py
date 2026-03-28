@@ -10,6 +10,7 @@ from pydantic import BaseModel, HttpUrl
 from pydoll.browser.chromium import Chrome
 from pydoll.browser.options import ChromiumOptions
 from pydoll.constants import PageLoadState
+from pydoll.exceptions import CommandExecutionTimeout
 
 API_KEY = os.environ.get("API_KEY", "")
 
@@ -85,18 +86,28 @@ def _extract_value(cdp_response: dict):
 async def _navigate(tab, url: str, bypass_cloudflare: bool, wait: int, timeout: int):
     """Navigate to a URL, optionally bypassing Cloudflare, and wait for content."""
     if bypass_cloudflare:
-        async with tab.expect_and_bypass_cloudflare_captcha(
-            time_to_wait_captcha=timeout,
-        ):
-            await tab.go_to(url)
+        try:
+            async with tab.expect_and_bypass_cloudflare_captcha(
+                time_to_wait_captcha=timeout,
+            ):
+                await tab.go_to(url)
+        except CommandExecutionTimeout:
+            # The cleanup phase (disable_page_events) can time out on
+            # resource-constrained hosts. The page is already loaded at
+            # this point, so it is safe to continue.
+            pass
         # After the bypass clicks the checkbox, Cloudflare still needs time to
         # verify and redirect. Poll until the page title is no longer the
         # challenge page ("Just a moment...").
         deadline = asyncio.get_event_loop().time() + timeout
         while asyncio.get_event_loop().time() < deadline:
-            title = _extract_value(
-                await tab.execute_script("return document.title")
-            )
+            try:
+                title = _extract_value(
+                    await tab.execute_script("return document.title")
+                )
+            except CommandExecutionTimeout:
+                await asyncio.sleep(0.5)
+                continue
             if title and "just a moment" not in title.lower():
                 break
             await asyncio.sleep(0.5)
