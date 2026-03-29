@@ -69,6 +69,13 @@ def create_browser_options(
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-default-apps")
+    options.add_argument("--disable-sync")
+    options.add_argument("--disable-translate")
+    options.add_argument("--single-process")
+    options.add_argument("--js-flags=--max-old-space-size=512")
     # Non-headless Chrome is required to bypass Cloudflare Turnstile.
     # On Windows (local dev) we move the window offscreen;
     # on Linux (Docker) Xvfb provides a virtual display.
