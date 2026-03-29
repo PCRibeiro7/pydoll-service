@@ -87,6 +87,10 @@ def create_browser_options(
     return options
 
 
+# Transient browser/connection exceptions worth retrying.
+_BROWSER_ERRORS = (CommandExecutionTimeout, TimeoutError, NavigationError, ConnectionError, OSError)
+
+
 app = FastAPI(title="Pydoll HTTP Service", version="1.0.0")
 
 
@@ -103,8 +107,8 @@ async def _navigate(tab, url: str, bypass_cloudflare: bool, wait: int, timeout: 
                 time_to_wait_captcha=timeout,
             ):
                 await tab.go_to(url)
-        except (CommandExecutionTimeout, TimeoutError):
-            # The setup/cleanup phase can time out on resource-constrained
+        except _BROWSER_ERRORS:
+            # The setup/cleanup phase can fail on resource-constrained
             # hosts. If the page already loaded, it is safe to continue;
             # otherwise the caller's retry loop will handle it.
             pass
@@ -117,7 +121,7 @@ async def _navigate(tab, url: str, bypass_cloudflare: bool, wait: int, timeout: 
                 title = _extract_value(
                     await tab.execute_script("return document.title")
                 )
-            except (CommandExecutionTimeout, TimeoutError):
+            except _BROWSER_ERRORS:
                 await asyncio.sleep(0.5)
                 continue
             if title and "just a moment" not in title.lower():
@@ -213,7 +217,7 @@ async def scrape(request: ScrapeRequest, _=Security(verify_api_key)):
                     )
 
                 return ScrapeResponse(url=validated_url, title=title, content=content)
-        except (TimeoutError, CommandExecutionTimeout, NavigationError) as exc:
+        except _BROWSER_ERRORS as exc:
             last_exc = exc
             logger.warning("Attempt %d/%d failed: %s", attempt, MAX_RETRIES, exc)
             await asyncio.sleep(attempt)  # linear back-off
@@ -242,7 +246,7 @@ async def screenshot(request: ScreenshotRequest, _=Security(verify_api_key)):
                 )
 
                 return ScreenshotResponse(url=validated_url, image_base64=image_base64)
-        except (TimeoutError, CommandExecutionTimeout, NavigationError) as exc:
+        except _BROWSER_ERRORS as exc:
             last_exc = exc
             logger.warning("Attempt %d/%d failed: %s", attempt, MAX_RETRIES, exc)
             await asyncio.sleep(attempt)
@@ -272,7 +276,7 @@ async def pdf(request: PdfRequest, _=Security(verify_api_key)):
                 )
 
                 return PdfResponse(url=validated_url, pdf_base64=pdf_base64)
-        except (TimeoutError, CommandExecutionTimeout, NavigationError) as exc:
+        except _BROWSER_ERRORS as exc:
             last_exc = exc
             logger.warning("Attempt %d/%d failed: %s", attempt, MAX_RETRIES, exc)
             await asyncio.sleep(attempt)
