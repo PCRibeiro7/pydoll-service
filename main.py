@@ -11,7 +11,7 @@ from pydantic import BaseModel, HttpUrl
 from pydoll.browser.chromium import Chrome
 from pydoll.browser.options import ChromiumOptions
 from pydoll.constants import PageLoadState
-from pydoll.exceptions import CommandExecutionTimeout
+from pydoll.exceptions import CommandExecutionTimeout, NavigationError
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +74,8 @@ def create_browser_options(
     options.add_argument("--disable-default-apps")
     options.add_argument("--disable-sync")
     options.add_argument("--disable-translate")
-    options.add_argument("--single-process")
-    options.add_argument("--js-flags=--max-old-space-size=512")
+    options.add_argument("--use-system-default-printer")
+    options.add_argument("--ignore-certificate-errors")
     # Non-headless Chrome is required to bypass Cloudflare Turnstile.
     # On Windows (local dev) we move the window offscreen;
     # on Linux (Docker) Xvfb provides a virtual display.
@@ -213,7 +213,7 @@ async def scrape(request: ScrapeRequest, _=Security(verify_api_key)):
                     )
 
                 return ScrapeResponse(url=validated_url, title=title, content=content)
-        except (TimeoutError, CommandExecutionTimeout) as exc:
+        except (TimeoutError, CommandExecutionTimeout, NavigationError) as exc:
             last_exc = exc
             logger.warning("Attempt %d/%d failed: %s", attempt, MAX_RETRIES, exc)
             await asyncio.sleep(attempt)  # linear back-off
@@ -242,7 +242,7 @@ async def screenshot(request: ScreenshotRequest, _=Security(verify_api_key)):
                 )
 
                 return ScreenshotResponse(url=validated_url, image_base64=image_base64)
-        except (TimeoutError, CommandExecutionTimeout) as exc:
+        except (TimeoutError, CommandExecutionTimeout, NavigationError) as exc:
             last_exc = exc
             logger.warning("Attempt %d/%d failed: %s", attempt, MAX_RETRIES, exc)
             await asyncio.sleep(attempt)
@@ -272,7 +272,7 @@ async def pdf(request: PdfRequest, _=Security(verify_api_key)):
                 )
 
                 return PdfResponse(url=validated_url, pdf_base64=pdf_base64)
-        except (TimeoutError, CommandExecutionTimeout) as exc:
+        except (TimeoutError, CommandExecutionTimeout, NavigationError) as exc:
             last_exc = exc
             logger.warning("Attempt %d/%d failed: %s", attempt, MAX_RETRIES, exc)
             await asyncio.sleep(attempt)
