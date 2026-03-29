@@ -76,6 +76,11 @@ def create_browser_options(
     options.add_argument("--disable-translate")
     options.add_argument("--use-system-default-printer")
     options.add_argument("--ignore-certificate-errors")
+    options.add_argument("--disable-software-rasterizer")
+    options.add_argument("--disable-accelerated-2d-canvas")
+    options.add_argument("--renderer-process-limit=1")
+    options.add_argument("--disable-features=TranslateUI")
+    options.add_argument("--js-flags=--max-old-space-size=256")
     # Non-headless Chrome is required to bypass Cloudflare Turnstile.
     # On Windows (local dev) we move the window offscreen;
     # on Linux (Docker) Xvfb provides a virtual display.
@@ -88,7 +93,13 @@ def create_browser_options(
 
 
 # Transient browser/connection exceptions worth retrying.
-_BROWSER_ERRORS = (CommandExecutionTimeout, TimeoutError, NavigationError, ConnectionError, OSError)
+_BROWSER_ERRORS = (
+    CommandExecutionTimeout,
+    TimeoutError,
+    NavigationError,
+    ConnectionError,
+    OSError,
+)
 
 
 app = FastAPI(title="Pydoll HTTP Service", version="1.0.0")
@@ -107,10 +118,12 @@ async def _navigate(tab, url: str, bypass_cloudflare: bool, wait: int, timeout: 
                 time_to_wait_captcha=timeout,
             ):
                 await tab.go_to(url)
-        except _BROWSER_ERRORS:
-            # The setup/cleanup phase can fail on resource-constrained
-            # hosts. If the page already loaded, it is safe to continue;
-            # otherwise the caller's retry loop will handle it.
+        except Exception:
+            # Catch broadly: the setup/cleanup of the Cloudflare bypass
+            # can fail with unexpected exceptions (e.g. ConnectionRefusedError
+            # from a crashed browser) during __aexit__. If the page already
+            # loaded, it is safe to continue; otherwise the caller's retry
+            # loop will handle it.
             pass
         # After the bypass clicks the checkbox, Cloudflare still needs time to
         # verify and redirect. Poll until the page title is no longer the
